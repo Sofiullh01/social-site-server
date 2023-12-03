@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const jwt = require('jsonwebtoken');
 const app = express();
 
 require("dotenv").config();
@@ -26,13 +27,80 @@ async function run() {
   try {
     const userCollection = client.db("lastAssignment").collection("users");
     const postCollection = client.db("lastAssignment").collection("post");
-
-    app.post("/users", async (req, res) => {
+  
+    // jwt api
+    app.post('/jwt',async(req,res)=>{
+      const user = req.body
+      const token = jwt.sign(user,process.env.ACCESS_TOKEN_SECRET,{expiresIn: '1h'});
+      res.send({token});
+    })
+    // middlewer
+    const varifyToken = (req,res,next)=>{
+      console.log('inside varifytoken' ,req.headers);
+      if(!req.headers.authorization){
+        return res.status(401).send({message:'forbidden access'})
+      }
+      const token = req.headers.authorization.split(' ')[1]
+      jwt.verify(token,process.env.ACCESS_TOKEN_SECRET,(err,decoded)=>{
+        if(err){
+          return res.status(401).send({message:'forbidden access'})
+        }
+        req.decoded = decoded;
+        next();
+      })
+    }
+    // user api
+    app.post("/users",varifyToken, async (req, res) => {
       const user = req.body;
-      console.log(user);
+      const query = {email: user.email};
+      const existingUser = await userCollection.findOne(query);
+      if(existingUser){
+        return res.send({message:'user already exists', insertedId: null})
+      }
       const result = await userCollection.insertOne(user);
-      res.send(result);
+      res.send(result)
     });
+    app.get("/users",async(req,res)=>{
+      const result = await userCollection.find().toArray();
+      res.send(result)
+    })
+    // creat admin api
+    app.patch('/users/admin/:id',async(req,res)=>{
+      const id = req.params.id;
+      const filter = {_id: new ObjectId(id)};
+      const updatedDoc = {
+        $set:{
+          roal:'admin'
+        }
+      }
+      const result = await userCollection.updateOne(filter,updatedDoc)
+      res.send(result)
+    });
+    // get admin 
+    app.get('/users/admin/:email',varifyToken,verifyAdmin,async(req,res)=>{
+      const email = req.params.email;
+      // if(email !== req.decoded.email){
+      //   return res.status(403).send({message:'unauthorized access'})
+      // };
+      const query = {email:email};
+      const user = await userCollection.findOne(query);
+      let admin = false;
+      if(user){
+        admin = user?.roal === 'admin';
+      }
+      res.send({admin})
+    });
+    // use verify admin 
+    const verifyAdmin = async(req,res,next)=>{
+      const email = req.decoded.email;
+      const query = {email:email};
+      const user = await userCollection.findOne(query);
+      const isAdmin = user?.roal === 'admin';
+      if(isAdmin){
+        return res.status(403).send({message: 'forbidden access'})
+      }
+      next();
+    }
     // post related api
     app.post("/post", async (req, res) => {
       const postData = req.body;
